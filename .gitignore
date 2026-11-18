@@ -1,0 +1,5 @@
+cikti/
+*.jks
+*parola*
+.env
+__pycache__/

@@ -1,0 +1,67 @@
+name: AIS anlık görüntü
+
+# Her 20 dakikada bir Türkiye denizleri için bir AIS anlık görüntüsü alır ve
+# "ais-veri" dalına yazar. Uygulama o dosyayı indirir; anahtar yalnız burada,
+# depo gizlisinde durur ve hiçbir cihaza girmez.
+#
+# Bu iş AÇIK AIS deposunda koşar, haritanın özel deposunda değil. Sebep:
+# raw.githubusercontent özel depoya jetonsuz 404 veriyor, uygulama dosyayı indiremiyor.
+# GITHUB_TOKEN de yalnız kendi deposuna yazabildiği için işin açık depoda olması
+# fazladan kişisel jeton ihtiyacını ortadan kaldırıyor. Ne toplayıcıda ne de
+# ais.json içinde gizli bir şey var; anahtar depo gizlisinde kalıyor ve bu iş
+# yalnız zamanlayıcı ile elle çalıştırmadan tetikleniyor (çatal isteği okuyamaz).
+#
+# Kurulum (bir kere):
+#   1. aisstream.io → GitHub ile giriş → Account → Create API key
+#   2. AÇIK depo → Settings → Secrets and variables → Actions → New repository secret
+#      Ad: AIS_ANAHTAR   Değer: (anahtar)
+#   3. Actions sekmesinden bu iş akışını bir kez elle çalıştır (Run workflow).
+#
+# Not: GitHub, 60 gün boyunca depoda insan eliyle bir hareket olmazsa zamanlanmış
+# iş akışlarını kendiliğinden durdurur; bu işin kendi commit'leri bunu sıfırlamaz.
+# Durursa Actions sekmesinden yeniden açılır.
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ais
+  cancel-in-progress: false
+
+jobs:
+  topla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Anlık görüntüyü al
+        env:
+          AIS_ANAHTAR: ${{ secrets.AIS_ANAHTAR }}
+        run: node ais_topla.mjs cikti/ais.json
+
+      - name: Veri dalına yaz
+        run: |
+          set -e
+          test -s cikti/ais.json
+          git config user.name "ais-bot"
+          git config user.email "ais-bot@users.noreply.github.com"
+          # Tek dosyalık yetim dal: geçmiş birikmesin, depo şişmesin.
+          rm -rf .ais && mkdir .ais && cp cikti/ais.json .ais/ais.json
+          cd .ais
+          git init -q -b ais-veri
+          git config user.name "ais-bot"
+          git config user.email "ais-bot@users.noreply.github.com"
+          git add ais.json
+          git commit -q -m "AIS anlık görüntü $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ais-veri
+          echo "yazıldı: https://raw.githubusercontent.com/${{ github.repository }}/ais-veri/ais.json"
