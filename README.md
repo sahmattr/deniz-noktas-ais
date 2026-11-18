@@ -36,9 +36,11 @@ Doğu Akdeniz, Güneybatı Akdeniz). Sebep ölçülmüş: tek kutu Free planın
 boğazlar kutuların içinde, Anadolu içi değil. Bir kutu `truncated` dönerse
 log onu KIRPIK diye yazar: o kutuyu bölmek daha çok temas verir.
 
-Free planın istek bütçesi tur başına beş isteğe yetmiyor (ölçüldü: üçüncü
-kutuda 429). Bu yüzden kutular turlar arasında döner: Marmara her turda
-ilk, kalanlar sırayla. Anlık görüntü 6 saat biriktiği için liste tam kalır.
+Free planın istek bütçesi kısa pencereli bir hız sınırı: 429 yanıtı
+`retry-after` veriyor (ölçülen 53 saniye). Toplayıcı o kadar bekleyip aynı
+kutuyu yeniden deniyor; bekleme toplamı 200 saniyeyi aşarsa vazgeçiyor.
+Yedek olarak kutular turlar arasında da döner: Marmara her turda ilk,
+kalanlar sırayla. Anlık görüntü 6 saat biriktiği için liste yine tam kalır.
 Bütçe dolunca o tura kadar alınan kutular korunur, atılmaz.
 
 Bu klasör ana projedeki `ais_depo.py` ile üretilir, elle değiştirme.

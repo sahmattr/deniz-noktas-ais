@@ -298,6 +298,8 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
              bir sonraki turda sıraya geçiyor (6 saatlik birikme bunu kapatıyor). */
           if (p.butce) console.log(`  ${p.dokum.length}/${KUTULAR.length} kutu alındı, ` +
                                    `${p.butce} — kalan kutular sonraki turda`);
+          else if (p.dokum.length === KUTULAR.length)
+            console.log(`  beş kutunun hepsi tek turda alındı`);
         } else {
           console.log("  Pelyr: gemi gelmedi, yalnız aisstream kullanılıyor");
         }

@@ -129,6 +129,10 @@ export async function pelyrIstek(anahtar, kutu, sira, enCok = EN_COK_ISTEK, geti
     const h = new Error("Pelyr istek bütçesi doldu (429)"
       + (bas.length ? " · " + bas.join(" ") : ""));
     h.butce = true;
+    /* Sunucunun söylediği bekleme. Ölçülen değer 53 saniyeydi: bu bir günlük
+       kota değil, kısa pencereli bir hız sınırı — beklemeye değer. */
+    const ra = Number(y.headers && y.headers.get ? y.headers.get("retry-after") : NaN);
+    if (Number.isFinite(ra) && ra > 0) h.bekleSn = ra;
     throw h;
   }
   if (!y.ok) throw new Error(`Pelyr ${y.status}`);
@@ -146,6 +150,11 @@ export async function pelyrKutu(anahtar, kutu, sira, enCok = EN_COK_ISTEK, getir
    dogrudan kullanilir: her kutuda iki kez denemek istek butcesini bosa harcar.
    Harmanlama burada MMSI anahtarli yapiliyor -- ais_topla.mjs'in birlestir()'ini
    cagirmak dairesel ice alma olurdu. */
+/* 429'da en fazla bu kadar saniye beklenir (toplam, butun kutular icin). Is
+   akisinin 12 dakika siniri var ve dinleme 5 dakika suruyor; 200 saniye rahat
+   siğiyor ve olculen 53 saniyelik pencereden uc kat buyuk. */
+export const EN_COK_BEKLEME = 200;
+
 /* Butce tur basina butun kutulara yetmiyor (olculdu: ucuncu istekte 429).
    Istegi kismak yerine kutulari donduruyoruz: anlik goruntu birlestir() ile
    6 saat boyunca birikiyor, yani bir turda alinmayan kutu bir sonraki turda
@@ -162,10 +171,23 @@ export function kutuSirasi(kutular = KUTULAR, an = Date.now()) {
 
 export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
                                     enCok = EN_COK_ISTEK, getir = fetch, ilerle,
-                                    an) {
+                                    an, uyu) {
   const harita = new Map();
   const dokum = [];
-  let sira = -1, butce = null;
+  const bekleyici = uyu || (sn => new Promise(r => setTimeout(r, sn * 1000)));
+  let sira = -1, butce = null, beklenen = 0;
+  /* 429 kısa pencereli bir hız sınırı: sunucunun söylediği kadar bekleyip aynı
+     kutuyu bir daha denemek, o kutuyu sonraki tura bırakmaktan iyidir. Bekleme
+     toplamı EN_COK_BEKLEME'yi aşarsa vazgeçip dönmeye bırakıyoruz. */
+  const butceBekle = async (e, ad) => {
+    const sn = Number.isFinite(e.bekleSn) ? e.bekleSn + 2 : 0;
+    if (!sn || beklenen + sn > EN_COK_BEKLEME) return false;
+    beklenen += sn;
+    if (ilerle) ilerle(`  Pelyr ${ad}: bütçe doldu, ${sn} sn bekleniyor ` +
+                       `(toplam ${beklenen}/${EN_COK_BEKLEME} sn)`);
+    await bekleyici(sn);
+    return true;
+  };
   for (const kutu of kutuSirasi(kutular, an)) {
     let sonuc = null;
     if (sira < 0) {
@@ -184,15 +206,22 @@ export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
       if (butce) break;
       if (sira < 0) sira = 0;                 /* hicbiri gemi vermedi: sirayi sabitle */
     } else {
-      try {
-        sonuc = await pelyrKutu(anahtar, kutu, sira, enCok, getir);
-      } catch (e) {
-        /* Bütçe bitmesi arıza değil, sınır: elde olanı TUTUP duruyoruz. Eskiden
-           burada hata atılıyordu ve dışarıdaki catch zaten alınmış bin gemiyi
-           çöpe atıyordu. */
-        if (e.butce) { butce = e; break; }
-        if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${e.message}`);
+      for (let deneme = 0; deneme < 2 && !sonuc; deneme++) {
+        try {
+          sonuc = await pelyrKutu(anahtar, kutu, sira, enCok, getir);
+        } catch (e) {
+          /* Bütçe bitmesi arıza değil, sınır. Önce beklemeyi deniyoruz; bekleme
+             bütçesi de bittiyse elde olanı TUTUP duruyoruz. Eskiden burada hata
+             atılıyordu ve dışarıdaki catch zaten alınmış bin gemiyi çöpe atıyordu. */
+          if (e.butce) {
+            if (deneme === 0 && await butceBekle(e, kutu.ad)) continue;
+            butce = e; break;
+          }
+          if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${e.message}`);
+          break;
+        }
       }
+      if (butce) break;
     }
     const g = (sonuc && sonuc.gemiler) || [];
     for (const k of g) {
