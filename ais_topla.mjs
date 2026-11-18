@@ -47,10 +47,28 @@ function adTemizle(s, enCok) {
   return String(s).trim().replace(/@+$/, "").trim().slice(0, enCok);
 }
 
-/* Boyut dort parca gelir: A bastan antene, B antenden kica. Gemi boyu A + B. */
+/* Boyut dort parca gelir: A bastan antene, B antenden kica, C ve D iki bordaya.
+   Gemi boyu A + B, eni C + D. */
 function boyHesapla(dim) {
   const boy = (+(dim && dim.A) || 0) + (+(dim && dim.B) || 0);
   return boy > 0 ? Math.round(boy) : 0;
+}
+
+function enHesapla(dim) {
+  const en = (+(dim && dim.C) || 0) + (+(dim && dim.D) || 0);
+  return en > 0 ? Math.round(en) : 0;
+}
+
+/* Su cekimi metre. AIS'te ust sinir 25,5 m; disindaki deger bozuk sayilir. */
+function cekimAl(d) {
+  const v = +d;
+  return Number.isFinite(v) && v > 0 && v <= 25.5 ? +v.toFixed(1) : 0;
+}
+
+/* Seyir durumu 0-15. 15 "tanimsiz" demek, bilgi tasimaz; onu almiyoruz. */
+function seyirAl(d) {
+  const v = +d;
+  return Number.isFinite(v) && v >= 0 && v <= 14 ? Math.round(v) : -1;
 }
 
 export function ayikla(mesajlar, alim) {
@@ -79,11 +97,17 @@ export function ayikla(mesajlar, alim) {
       if (Number.isFinite(cog) && cog >= 0 && cog < 360) k.cog = +cog.toFixed(1);
       if (Number.isFinite(sog) && sog >= 0 && sog < 102.3) k.sog = +sog.toFixed(1);
       if (Number.isFinite(hdg) && hdg >= 0 && hdg < 360) k.hdg = Math.round(hdg);
+      /* Seyir durumu yalniz A sinifi mevki mesajinda var (1/2/3): demirli mi,
+         yol aliyor mu, baliklikla mesgul mu. B sinifi bunu hic tasimaz. */
+      const ns = seyirAl(p.NavigationalStatus);
+      if (ns >= 0) k.ns = ns;
       /* ExtendedClassBPositionReport ad, tip ve boyut da tasir (19 numarali mesaj) */
       if (p.Name) k.a = adTemizle(p.Name, 24);
       if (Number.isFinite(+p.Type) && +p.Type > 0) k.tp = +p.Type;
       const boyE = boyHesapla(p.Dimension);
       if (boyE) k.boy = boyE;
+      const enE = enHesapla(p.Dimension);
+      if (enE) k.en = enE;
     }
     const s = govde.ShipStaticData || govde.shipStaticData;
     if (s) {
@@ -92,6 +116,14 @@ export function ayikla(mesajlar, alim) {
       if (s.Destination) k.vr = adTemizle(s.Destination, 20);
       const boy = boyHesapla(s.Dimension);
       if (boy) k.boy = boy;
+      const en = enHesapla(s.Dimension);
+      if (en) k.en = en;
+      /* Cagri adi VHF'te ise yarar; IMO govdeye ait ve MMSI gibi degismez. */
+      if (s.CallSign) k.cs = adTemizle(s.CallSign, 10);
+      const imo = +s.ImoNumber;
+      if (Number.isFinite(imo) && imo > 0) k.imo = Math.round(imo);
+      const dr = cekimAl(s.MaximumStaticDraught);
+      if (dr) k.dr = dr;
     }
     /* StaticDataReport (24): B sinifinin statik bilgisi, iki parca halinde gelir.
        A parcasi ad, B parcasi tip ve boyut tasir; ikisi ayri mesajlarda gelebilir. */
@@ -103,6 +135,9 @@ export function ayikla(mesajlar, alim) {
       if (Number.isFinite(+pB.ShipType) && +pB.ShipType > 0) k.tp = +pB.ShipType;
       const boyB = boyHesapla(pB.Dimension);
       if (boyB) k.boy = boyB;
+      const enB = enHesapla(pB.Dimension);
+      if (enB) k.en = enB;
+      if (pB.CallSign) k.cs = adTemizle(pB.CallSign, 10);
     }
     const ad = md.ShipName || md.shipName;
     if (ad && !k.a) k.a = String(ad).trim().replace(/@+$/, "").slice(0, 24);

@@ -63,6 +63,9 @@ export function pelyrAyikla(veri, alim) {
     if (Number.isFinite(sog) && sog >= 0) k.sog = Math.round(sog * 10) / 10;
     /* 511 = "pruva yok" demek, geçerli bir açı değil. */
     if (Number.isFinite(hdg) && hdg >= 0 && hdg < 360) k.hdg = Math.round(hdg);
+    /* Seyir durumu: demirli / yol alıyor / balıkçılıkla meşgul… 15 "tanımsız" demek. */
+    const ns = Number(p.nav_status);
+    if (Number.isFinite(ns) && ns >= 0 && ns <= 14) k.ns = Math.round(ns);
     const s = g.static;
     if (s && typeof s === "object") {
       const ad = String(s.name == null ? "" : s.name).trim().replace(/@+$/, "").trim();
@@ -73,6 +76,15 @@ export function pelyrAyikla(veri, alim) {
       if (Number.isFinite(boy) && boy > 0) k.boy = Math.round(boy);
       const vr = String(s.dest == null ? "" : s.dest).trim().replace(/@+$/, "").trim();
       if (vr) k.vr = vr.slice(0, 20);
+      const en = Number(s.beam);
+      if (Number.isFinite(en) && en > 0) k.en = Math.round(en);
+      /* Çağrı adı VHF'te işe yarar; IMO gövdeye ait ve MMSI gibi değişmez. */
+      const cs = String(s.callsign == null ? "" : s.callsign).trim().replace(/@+$/, "").trim();
+      if (cs) k.cs = cs.slice(0, 10);
+      const imo = Number(s.imo);
+      if (Number.isFinite(imo) && imo > 0) k.imo = Math.round(imo);
+      const dr = Number(s.draught);
+      if (Number.isFinite(dr) && dr > 0 && dr <= 25.5) k.dr = Math.round(dr * 10) / 10;
     }
     cikti.push(k);
   }
