@@ -294,6 +294,10 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
           const kirpik = p.dokum.filter(x => x.kirpik).map(x => x.ad);
           if (kirpik.length) console.log(`  DİKKAT kırpılan kutu: ${kirpik.join(", ")} ` +
                                          `— bu kutuyu bölmek daha çok temas verir`);
+          /* Bütçe bitmesi turu düşürmüyor: alınan kutular kullanılıyor, kalanlar
+             bir sonraki turda sıraya geçiyor (6 saatlik birikme bunu kapatıyor). */
+          if (p.butce) console.log(`  ${p.dokum.length}/${KUTULAR.length} kutu alındı, ` +
+                                   `${p.butce} — kalan kutular sonraki turda`);
         } else {
           console.log("  Pelyr: gemi gelmedi, yalnız aisstream kullanılıyor");
         }

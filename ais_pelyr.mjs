@@ -117,7 +117,20 @@ export async function pelyrIstek(anahtar, kutu, sira, enCok = EN_COK_ISTEK, geti
   const y = await getir(adres, {
     headers: { Authorization: `Bearer ${anahtar}`, Accept: "application/json" },
   });
-  if (y.status === 429) { const h = new Error("Pelyr istek bütçesi doldu (429)"); h.butce = true; throw h; }
+  if (y.status === 429) {
+    /* Hangi sınıra çarptığımızı loga yazabilmek için başlıkları taşıyoruz:
+       bütçenin gerçek büyüklüğünü ancak buradan öğreniyoruz. */
+    const bas = [];
+    for (const ad of ["retry-after", "ratelimit-limit", "ratelimit-remaining",
+                      "ratelimit-reset", "x-ratelimit-limit", "x-ratelimit-remaining"]) {
+      const v = y.headers && y.headers.get ? y.headers.get(ad) : null;
+      if (v != null) bas.push(`${ad}=${v}`);
+    }
+    const h = new Error("Pelyr istek bütçesi doldu (429)"
+      + (bas.length ? " · " + bas.join(" ") : ""));
+    h.butce = true;
+    throw h;
+  }
   if (!y.ok) throw new Error(`Pelyr ${y.status}`);
   return await y.json();
 }
@@ -133,12 +146,27 @@ export async function pelyrKutu(anahtar, kutu, sira, enCok = EN_COK_ISTEK, getir
    dogrudan kullanilir: her kutuda iki kez denemek istek butcesini bosa harcar.
    Harmanlama burada MMSI anahtarli yapiliyor -- ais_topla.mjs'in birlestir()'ini
    cagirmak dairesel ice alma olurdu. */
+/* Butce tur basina butun kutulara yetmiyor (olculdu: ucuncu istekte 429).
+   Istegi kismak yerine kutulari donduruyoruz: anlik goruntu birlestir() ile
+   6 saat boyunca birikiyor, yani bir turda alinmayan kutu bir sonraki turda
+   gelir ve liste tam kalir. Marmara her turda ILK: kullanicinin asil boslugu
+   orasiydi (aisstream'de 9 gemi gorunuyordu). Kalan kutular 20 dakikalik
+   dilimlere gore sirayla basa geciyor, yani hicbiri ac kalmiyor. */
+export function kutuSirasi(kutular = KUTULAR, an = Date.now()) {
+  const l = (kutular || []).slice();
+  if (l.length <= 2) return l;
+  const ilk = l[0], geri = l.slice(1);
+  const k = Math.floor(an / 1200000) % geri.length;   /* 20 dakika = bir tur */
+  return [ilk, ...geri.slice(k), ...geri.slice(0, k)];
+}
+
 export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
-                                    enCok = EN_COK_ISTEK, getir = fetch, ilerle) {
+                                    enCok = EN_COK_ISTEK, getir = fetch, ilerle,
+                                    an) {
   const harita = new Map();
   const dokum = [];
-  let sira = -1;
-  for (const kutu of kutular) {
+  let sira = -1, butce = null;
+  for (const kutu of kutuSirasi(kutular, an)) {
     let sonuc = null;
     if (sira < 0) {
       /* Ilk kutu: hangi bbox sirasinin dogru oldugunu bul. Yanlis sira hata
@@ -149,16 +177,20 @@ export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
           if (o.gemiler.length) { sonuc = o; sira = s; break; }
           sonuc = o;
         } catch (e) {
-          if (e.butce) throw e;
+          if (e.butce) { butce = e; break; }
           if (ilerle) ilerle(`  Pelyr ${kutu.ad} [${SIRALAR[s].ad}]: ${e.message}`);
         }
       }
+      if (butce) break;
       if (sira < 0) sira = 0;                 /* hicbiri gemi vermedi: sirayi sabitle */
     } else {
       try {
         sonuc = await pelyrKutu(anahtar, kutu, sira, enCok, getir);
       } catch (e) {
-        if (e.butce) throw e;                 /* butce bittiyse kalan kutular bos gider */
+        /* Bütçe bitmesi arıza değil, sınır: elde olanı TUTUP duruyoruz. Eskiden
+           burada hata atılıyordu ve dışarıdaki catch zaten alınmış bin gemiyi
+           çöpe atıyordu. */
+        if (e.butce) { butce = e; break; }
         if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${e.message}`);
       }
     }
@@ -176,7 +208,7 @@ export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
                        (sonuc && sonuc.kirpik ? " (KIRPIK — kutu bölünmeli)" : ""));
   }
   const gemiler = [...harita.values()].sort((a, b) => (b.t || 0) - (a.t || 0));
-  return { gemiler, sira, dokum };
+  return { gemiler, sira, dokum, butce: butce ? butce.message : null };
 }
 
 /* İki bbox sırasını dener, çok gemi getireni döndürür. Dönen: {gemiler, sira, sayilar}. */
