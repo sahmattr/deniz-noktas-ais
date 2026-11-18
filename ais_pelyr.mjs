@@ -45,11 +45,18 @@ export const KUTULAR = [
      Canakkale bogazlari, Izmit korfezi, Gelibolu iceride. */
   { ad: "Marmara ve Boğazlar", guney: 40.0, kuzey: 41.4, bati: 26.0, dogu: 30.2 },
   { ad: "Karadeniz", guney: 40.9, kuzey: 43.6, bati: 27.3, dogu: 42.0 },
-  { ad: "Ege", guney: 34.8, kuzey: 41.0, bati: 23.0, dogu: 28.6 },
+  /* Ege tek kutuyken 928 gemi dondu ve `truncated` isaretliydi: 1000'lik sinira
+     dayaniyordu. 38,3 enleminde ikiye bolundu. Ustuste binen serit zararsiz --
+     harmanlama MMSI anahtarli. */
+  { ad: "Kuzey Ege", guney: 38.0, kuzey: 41.0, bati: 23.0, dogu: 28.0 },
+  { ad: "Güney Ege", guney: 34.8, kuzey: 38.3, bati: 23.0, dogu: 28.6 },
   /* Turkiye guney kiyisi ve Kibris: Fethiye'den Iskenderun'a. */
   { ad: "Doğu Akdeniz", guney: 31.0, kuzey: 37.0, bati: 27.0, dogu: 36.6 },
-  /* Girit guneyi: eski kutunun geri kalan acik denizi. */
-  { ad: "Güneybatı Akdeniz", guney: 31.0, kuzey: 34.8, bati: 23.0, dogu: 27.0 },
+  /* Girit guneyi: eski kutunun geri kalan acik denizi. Olculdu: 2 gemi. Tam bir
+     istek ve ~57 saniye bekleme harciyor, bu yuzden `son: true` ile sıranin
+     sonuna sabit -- bekleme butcesi biterse kaybedilecek en ucuz kutu bu. Kutu
+     yine duruyor: uygulamanin batimetri kutusunda o deniz de var. */
+  { ad: "Güneybatı Akdeniz", guney: 31.0, kuzey: 34.8, bati: 23.0, dogu: 27.0, son: true },
 ];
 
 export function kutuMetni(kutu, sira) {
@@ -150,10 +157,11 @@ export async function pelyrKutu(anahtar, kutu, sira, enCok = EN_COK_ISTEK, getir
    dogrudan kullanilir: her kutuda iki kez denemek istek butcesini bosa harcar.
    Harmanlama burada MMSI anahtarli yapiliyor -- ais_topla.mjs'in birlestir()'ini
    cagirmak dairesel ice alma olurdu. */
-/* 429'da en fazla bu kadar saniye beklenir (toplam, butun kutular icin). Is
-   akisinin 12 dakika siniri var ve dinleme 5 dakika suruyor; 200 saniye rahat
-   siğiyor ve olculen 53 saniyelik pencereden uc kat buyuk. */
-export const EN_COK_BEKLEME = 200;
+/* 429'da en fazla bu kadar saniye beklenir (toplam, butun kutular icin). Alti
+   kutu bes bekleme demek ve olculen pencere ~57 saniye: 240 saniye hepsine
+   yetiyor. Is akisinin 15 dakika siniri var, dinleme 5 dakika suruyor; en kotu
+   durumda toplam ~10 dakika. */
+export const EN_COK_BEKLEME = 240;
 
 /* Butce tur basina butun kutulara yetmiyor (olculdu: ucuncu istekte 429).
    Istegi kismak yerine kutulari donduruyoruz: anlik goruntu birlestir() ile
@@ -164,9 +172,14 @@ export const EN_COK_BEKLEME = 200;
 export function kutuSirasi(kutular = KUTULAR, an = Date.now()) {
   const l = (kutular || []).slice();
   if (l.length <= 2) return l;
-  const ilk = l[0], geri = l.slice(1);
-  const k = Math.floor(an / 1200000) % geri.length;   /* 20 dakika = bir tur */
-  return [ilk, ...geri.slice(k), ...geri.slice(0, k)];
+  /* `son` isaretli kutular dönmeye hiç girmez, en sonda kalir: olculen gemi
+     sayilari cok dusuk, bekleme butcesi biterse once onlar kaybedilsin. */
+  const ilk = l[0];
+  const orta = l.slice(1).filter(k => !k.son);
+  const son = l.slice(1).filter(k => k.son);
+  if (!orta.length) return [ilk, ...son];
+  const k = Math.floor(an / 1200000) % orta.length;   /* 20 dakika = bir tur */
+  return [ilk, ...orta.slice(k), ...orta.slice(0, k), ...son];
 }
 
 export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,

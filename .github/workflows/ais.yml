@@ -36,7 +36,7 @@ concurrency:
 jobs:
   topla:
     runs-on: ubuntu-latest
-    timeout-minutes: 12          # 5 dk dinleme + kurulum + gönderme
+    timeout-minutes: 15          # 5 dk dinleme + Pelyr beklemeleri (en çok 240 sn) + gönderme
     steps:
       - uses: actions/checkout@v4
 
