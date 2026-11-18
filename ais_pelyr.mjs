@@ -33,6 +33,25 @@ export const SIRALAR = [
   { ad: "enlem önce (güney,batı,kuzey,doğu)", yap: k => [k.guney, k.bati, k.kuzey, k.dogu] },
 ];
 
+/* Denizlere oturan kutular. Tek kutu (23-42 D, 31-43,6 K) Anadolu'nun tamamini,
+   Suriye-Irak'i ve Bulgaristan'i iceriyordu: hem istek hem de 1000'lik gemi
+   siniri karaya harcaniyordu. Bu bes kutunun BIRLESIMI aynı denizleri kapsiyor,
+   karalari atliyor. Ustuste binen kenarlar zararsiz: harmanlama MMSI anahtarli.
+
+   Limanlar ve bogazlar bilerek iceride -- Istanbul ve Canakkale bogazlari, Izmit
+   ve Saros korfezleri, Iskenderun ve Mersin limanlari kiyi kutularinin icinde. */
+export const KUTULAR = [
+  /* Bogazlar ve Marmara: en yogun yer, kendi kutusunu hak ediyor. Istanbul ve
+     Canakkale bogazlari, Izmit korfezi, Gelibolu iceride. */
+  { ad: "Marmara ve Boğazlar", guney: 40.0, kuzey: 41.4, bati: 26.0, dogu: 30.2 },
+  { ad: "Karadeniz", guney: 40.9, kuzey: 43.6, bati: 27.3, dogu: 42.0 },
+  { ad: "Ege", guney: 34.8, kuzey: 41.0, bati: 23.0, dogu: 28.6 },
+  /* Turkiye guney kiyisi ve Kibris: Fethiye'den Iskenderun'a. */
+  { ad: "Doğu Akdeniz", guney: 31.0, kuzey: 37.0, bati: 27.0, dogu: 36.6 },
+  /* Girit guneyi: eski kutunun geri kalan acik denizi. */
+  { ad: "Güneybatı Akdeniz", guney: 31.0, kuzey: 34.8, bati: 23.0, dogu: 27.0 },
+];
+
 export function kutuMetni(kutu, sira) {
   return SIRALAR[sira].yap(kutu).map(n => Number(n).toFixed(4)).join(",");
 }
@@ -101,6 +120,63 @@ export async function pelyrIstek(anahtar, kutu, sira, enCok = EN_COK_ISTEK, geti
   if (y.status === 429) { const h = new Error("Pelyr istek bütçesi doldu (429)"); h.butce = true; throw h; }
   if (!y.ok) throw new Error(`Pelyr ${y.status}`);
   return await y.json();
+}
+
+/* Tek kutu: kayitlar ve kirpilma bayragi. `truncated` gelirse o kutuda daha fazla
+   gemi var ve secim alana dagitilmis -- cozum kutuyu bolmek, max'i buyutmek degil. */
+export async function pelyrKutu(anahtar, kutu, sira, enCok = EN_COK_ISTEK, getir = fetch) {
+  const veri = await pelyrIstek(anahtar, kutu, sira, enCok, getir);
+  return { gemiler: pelyrAyikla(veri), kirpik: !!(veri && veri.truncated) };
+}
+
+/* Butun kutular. bbox sirasi YALNIZ ilk kutuda aranir, bulunan sira otekilerde
+   dogrudan kullanilir: her kutuda iki kez denemek istek butcesini bosa harcar.
+   Harmanlama burada MMSI anahtarli yapiliyor -- ais_topla.mjs'in birlestir()'ini
+   cagirmak dairesel ice alma olurdu. */
+export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
+                                    enCok = EN_COK_ISTEK, getir = fetch, ilerle) {
+  const harita = new Map();
+  const dokum = [];
+  let sira = -1;
+  for (const kutu of kutular) {
+    let sonuc = null;
+    if (sira < 0) {
+      /* Ilk kutu: hangi bbox sirasinin dogru oldugunu bul. Yanlis sira hata
+         vermiyor, bos donuyor -- bu yuzden sonuca bakmak zorundayiz. */
+      for (let s = 0; s < SIRALAR.length; s++) {
+        try {
+          const o = await pelyrKutu(anahtar, kutu, s, enCok, getir);
+          if (o.gemiler.length) { sonuc = o; sira = s; break; }
+          sonuc = o;
+        } catch (e) {
+          if (e.butce) throw e;
+          if (ilerle) ilerle(`  Pelyr ${kutu.ad} [${SIRALAR[s].ad}]: ${e.message}`);
+        }
+      }
+      if (sira < 0) sira = 0;                 /* hicbiri gemi vermedi: sirayi sabitle */
+    } else {
+      try {
+        sonuc = await pelyrKutu(anahtar, kutu, sira, enCok, getir);
+      } catch (e) {
+        if (e.butce) throw e;                 /* butce bittiyse kalan kutular bos gider */
+        if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${e.message}`);
+      }
+    }
+    const g = (sonuc && sonuc.gemiler) || [];
+    for (const k of g) {
+      const v = harita.get(k.m);
+      /* Kutular ustuste biniyor: ayni gemi iki kutudan gelebilir, yenisi kazanir
+         ve eksik alanlar otekinden tamamlanir. */
+      if (!v) harita.set(k.m, k);
+      else harita.set(k.m, (k.t || 0) >= (v.t || 0)
+                           ? Object.assign({}, v, k) : Object.assign({}, k, v));
+    }
+    dokum.push({ ad: kutu.ad, say: g.length, kirpik: !!(sonuc && sonuc.kirpik) });
+    if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${g.length} gemi` +
+                       (sonuc && sonuc.kirpik ? " (KIRPIK — kutu bölünmeli)" : ""));
+  }
+  const gemiler = [...harita.values()].sort((a, b) => (b.t || 0) - (a.t || 0));
+  return { gemiler, sira, dokum };
 }
 
 /* İki bbox sırasını dener, çok gemi getireni döndürür. Dönen: {gemiler, sira, sayilar}. */

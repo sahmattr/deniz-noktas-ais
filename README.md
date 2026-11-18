@@ -30,4 +30,10 @@ Secret tanımlı değilse Pelyr sessizce atlanır, tur aisstream ile tamamlanır
 İki liste MMSI'ye göre harmanlanır: aynı gemide yeni mevki kazanır, bir
 kaynakta olmayan alan (ad, tip, varış, boy) diğerinden korunur.
 
+Pelyr beş deniz kutusuyla sorgulanır (Marmara ve Boğazlar, Karadeniz, Ege,
+Doğu Akdeniz, Güneybatı Akdeniz). Sebep ölçülmüş: tek kutu Free planın
+1000 gemi sınırına dayanıyordu ve kutunun büyük kısmı karaydı. Limanlar ve
+boğazlar kutuların içinde, Anadolu içi değil. Bir kutu `truncated` dönerse
+log onu KIRPIK diye yazar: o kutuyu bölmek daha çok temas verir.
+
 Bu klasör ana projedeki `ais_depo.py` ile üretilir, elle değiştirme.

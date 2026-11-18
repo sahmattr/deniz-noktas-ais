@@ -14,7 +14,7 @@
 
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { pelyrCek, SIRALAR } from "./ais_pelyr.mjs";
+import { pelyrCekHepsi, KUTULAR, SIRALAR } from "./ais_pelyr.mjs";
 
 /* Türkiye denizleri: uygulamanın batimetri kutusuyla aynı (23–42° D, 31–43,6° K) */
 export const KUTU = { guney: 31.0, kuzey: 43.6, bati: 23.0, dogu: 42.0 };
@@ -280,13 +280,20 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
     const pAnahtar = process.env.PELYR_ANAHTAR;
     if (pAnahtar) {
       try {
-        const p = await pelyrCek(pAnahtar, KUTU, 1000, fetch, m => console.log(m));
+        /* Tek kutu 1000'lik sinira dayaniyordu (995 ve 979 dondu): kutuda daha
+           fazla gemi vardi ama kirpiliyordu. Bes deniz kutusu hem siniri hem de
+           karaya harcanan istegi cozuyor. */
+        const p = await pelyrCekHepsi(pAnahtar, KUTULAR, 1000, fetch, m => console.log(m));
         if (p.gemiler.length) {
           const once = gemiler.length;
           gemiler = birlestir(gemiler, p.gemiler);
           kaynaklar.push("pelyr.com");
-          console.log(`  Pelyr [${SIRALAR[p.sira].ad}]: ${p.gemiler.length} gemi → ` +
-                      `${once} + ${p.gemiler.length} harmanlandı → ${gemiler.length}`);
+          console.log(`  Pelyr [${SIRALAR[p.sira].ad}] ${p.dokum.length} kutu: ` +
+                      `${p.gemiler.length} tekil gemi → ${once} + ${p.gemiler.length} ` +
+                      `harmanlandı → ${gemiler.length}`);
+          const kirpik = p.dokum.filter(x => x.kirpik).map(x => x.ad);
+          if (kirpik.length) console.log(`  DİKKAT kırpılan kutu: ${kirpik.join(", ")} ` +
+                                         `— bu kutuyu bölmek daha çok temas verir`);
         } else {
           console.log("  Pelyr: gemi gelmedi, yalnız aisstream kullanılıyor");
         }
