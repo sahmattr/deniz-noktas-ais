@@ -12,19 +12,46 @@
 
    Node 22+ gerekiyor (global WebSocket). Dış paket kullanmıyor. */
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /* Türkiye denizleri: uygulamanın batimetri kutusuyla aynı (23–42° D, 31–43,6° K) */
 export const KUTU = { guney: 31.0, kuzey: 43.6, bati: 23.0, dogu: 42.0 };
-export const SURE = 90;            /* saniye dinlenir */
+/* Dinleme penceresi. Kisa tutmak gemi kaybettiriyor: seyir halindeki A sinifi
+   2-10 saniyede bir yayin yapar ama DEMIRLI ya da bagli gemi 3 dakikada bir,
+   B sinifi yavasken yine 3 dakikada bir. 90 saniyeyle limanlar ve demir sahalari
+   bos gorunuyordu. 5 dakika bir tam yayin donemini rahat kapsiyor. */
+export const SURE = 300;           /* saniye dinlenir */
+
+/* Hangi mesaj tipleri. PositionReport yalnizca AIS 1/2/3, yani A SINIFI gemiler.
+   B sinifi (18/19) ayri tiplerle gelir ve Turkiye kiyilarinda trafigin buyuk kismi
+   odur. StaticDataReport (24) B sinifinin adini ve tipini tasir; o olmadan B sinifi
+   gemiler haritada adsiz kalir. Seyir yardimcilari (samandira, fener) bilerek disarida:
+   onlar gemi degil. */
+export const TIPLER = ["PositionReport", "ShipStaticData",
+                       "StandardClassBPositionReport", "ExtendedClassBPositionReport",
+                       "StaticDataReport"];
 export const EN_COK = 6000;        /* dosya şişmesin */
+/* Kaydın ömrü: uygulamadaki AIS_OMUR_SAAT ile aynı olmalı, yoksa indirilen dosyada
+   uygulamanın hiç çizmeyeceği kayıtlar taşınır. */
+export const OMUR_SAAT = 6;
 
 /* aisstream mesajlarını kayda çevirir. Ağdan bağımsız — sınamalar bunu doğrudan çağırır.
 
    Kaydın saati MEVKİNİN saatidir: statik mesaj (ad, tip, varış) mevki taşımadığı için
    saati ileri ÇEKMEZ. Çekseydi uygulama hayaleti olduğundan taze sanır ve ileri taşımayı
    olduğundan kısa hesaplardı. */
+/* AIS metin alanlari sabit uzunluktadir ve sonu "@" ile doldurulur. */
+function adTemizle(s, enCok) {
+  return String(s).trim().replace(/@+$/, "").trim().slice(0, enCok);
+}
+
+/* Boyut dort parca gelir: A bastan antene, B antenden kica. Gemi boyu A + B. */
+function boyHesapla(dim) {
+  const boy = (+(dim && dim.A) || 0) + (+(dim && dim.B) || 0);
+  return boy > 0 ? Math.round(boy) : 0;
+}
+
 export function ayikla(mesajlar, alim) {
   const al = Number.isFinite(alim) ? alim : Date.now();
   const harita = new Map();
@@ -37,7 +64,10 @@ export function ayikla(mesajlar, alim) {
     const k = harita.get(mmsi) || { m: mmsi };
     const zaman = Date.parse(String(md.time_utc || md.TimeUtc || "")
       .replace(" +0000 UTC", "Z").replace(" ", "T"));
-    const p = govde.PositionReport || govde.positionReport;
+    /* Mevki tasiyan her tip: A sinifi (1/2/3) ve B sinifi (18/19). */
+    const p = govde.PositionReport || govde.positionReport
+      || govde.StandardClassBPositionReport || govde.standardClassBPositionReport
+      || govde.ExtendedClassBPositionReport || govde.extendedClassBPositionReport;
     if (p) {
       k.t = Number.isFinite(zaman) ? zaman : al;
       const la = +(md.latitude != null ? md.latitude : p.Latitude);
@@ -48,15 +78,30 @@ export function ayikla(mesajlar, alim) {
       if (Number.isFinite(cog) && cog >= 0 && cog < 360) k.cog = +cog.toFixed(1);
       if (Number.isFinite(sog) && sog >= 0 && sog < 102.3) k.sog = +sog.toFixed(1);
       if (Number.isFinite(hdg) && hdg >= 0 && hdg < 360) k.hdg = Math.round(hdg);
+      /* ExtendedClassBPositionReport ad, tip ve boyut da tasir (19 numarali mesaj) */
+      if (p.Name) k.a = adTemizle(p.Name, 24);
+      if (Number.isFinite(+p.Type) && +p.Type > 0) k.tp = +p.Type;
+      const boyE = boyHesapla(p.Dimension);
+      if (boyE) k.boy = boyE;
     }
     const s = govde.ShipStaticData || govde.shipStaticData;
     if (s) {
-      if (s.Name) k.a = String(s.Name).trim().replace(/@+$/, "").slice(0, 24);
+      if (s.Name) k.a = adTemizle(s.Name, 24);
       if (Number.isFinite(+s.Type)) k.tp = +s.Type;
-      if (s.Destination) k.vr = String(s.Destination).trim().replace(/@+$/, "").slice(0, 20);
-      const dim = s.Dimension || {};
-      const boy = (+dim.A || 0) + (+dim.B || 0);        /* baş + kıç: gemi boyu */
-      if (boy > 0) k.boy = Math.round(boy);
+      if (s.Destination) k.vr = adTemizle(s.Destination, 20);
+      const boy = boyHesapla(s.Dimension);
+      if (boy) k.boy = boy;
+    }
+    /* StaticDataReport (24): B sinifinin statik bilgisi, iki parca halinde gelir.
+       A parcasi ad, B parcasi tip ve boyut tasir; ikisi ayri mesajlarda gelebilir. */
+    const sd = govde.StaticDataReport || govde.staticDataReport;
+    if (sd) {
+      const pA = sd.ReportA || sd.reportA || {};
+      const pB = sd.ReportB || sd.reportB || {};
+      if (pA.Name) k.a = adTemizle(pA.Name, 24);
+      if (Number.isFinite(+pB.ShipType) && +pB.ShipType > 0) k.tp = +pB.ShipType;
+      const boyB = boyHesapla(pB.Dimension);
+      if (boyB) k.boy = boyB;
     }
     const ad = md.ShipName || md.shipName;
     if (ad && !k.a) k.a = String(ad).trim().replace(/@+$/, "").slice(0, 24);
@@ -111,7 +156,7 @@ export function topla(anahtar, kutu = KUTU, sure = SURE, ilerle) {
     ws.onopen = () => ws.send(JSON.stringify({
       APIKey: anahtar,
       BoundingBoxes: [[[kutu.guney, kutu.bati], [kutu.kuzey, kutu.dogu]]],
-      FilterMessageTypes: ["PositionReport", "ShipStaticData"]
+      FilterMessageTypes: TIPLER
     }));
     ws.onmessage = (e) => {
       tani.cerceve++;
@@ -146,6 +191,36 @@ export function topla(anahtar, kutu = KUTU, sure = SURE, ilerle) {
   });
 }
 
+/* Önceki anlık görüntüyle birleştirir.
+
+   Neden: tek pencere sahanın tamamını göstermez. Demirli gemi 3 dakikada bir, B sınıfı
+   yavaşken yine 3 dakikada bir yayın yapar; beş dakikada susmuş olan gemi kaybolur ve
+   bir sonraki turda geri gelir — liste titrer. Uygulama kaydı yaşına göre ileri taşıyıp
+   belirsizlik halkası çizdiği ve OMUR_SAAT'ten eskisini hiç çizmediği için eski kaydı
+   TAŞIMAK kaybetmekten iyidir: kullanıcı hem gemiyi görür hem ne kadar eski olduğunu.
+
+   Kural: aynı MMSI'de yeni kayıt kazanır, ama yeni kayıtta OLMAYAN alanlar (ad, tip,
+   varış, boy) eskisinden korunur — mevki mesajı bunları taşımaz, statik mesaj seyrek
+   gelir. Ömrü geçen kayıt düşer. */
+export function birlestir(eski, yeni, simdi, omurSaat = OMUR_SAAT) {
+  const an = Number.isFinite(simdi) ? simdi : Date.now();
+  const sinir = an - omurSaat * 3600e3;
+  const harita = new Map();
+  for (const k of (eski || [])) {
+    if (!k || !k.m || !Number.isFinite(k.t) || k.t < sinir) continue;
+    harita.set(k.m, Object.assign({}, k));
+  }
+  for (const k of (yeni || [])) {
+    if (!k || !k.m || !Number.isFinite(k.t) || k.t < sinir) continue;
+    const v = harita.get(k.m);
+    if (!v) { harita.set(k.m, Object.assign({}, k)); continue; }
+    /* Eskisi daha yeniyse mevkisi korunur; her hâlde eksik alanlar tamamlanır. */
+    harita.set(k.m, k.t >= v.t ? Object.assign({}, v, k) : Object.assign({}, k, v));
+  }
+  const cikti = [...harita.values()].sort((a, b) => (b.t || 0) - (a.t || 0));
+  return cikti.slice(0, EN_COK);
+}
+
 /* Uygulamanın indirdiği dosyanın biçimi. Sürüm alanı: biçim değişirse eski uygulama
    sessizce yanlış okumasın. */
 export function goruntu(gemiler, kutu = KUTU, simdi) {
@@ -160,10 +235,23 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
   if (!anahtar) { console.error("AIS_ANAHTAR ortam değişkeni yok"); process.exit(1); }
   try {
     const ham = await topla(anahtar, KUTU, SURE, n => console.log(`  ${n} mesaj…`));
-    const gemiler = ayikla(ham);
+    let gemiler = ayikla(ham);
+    const yeniSayi = gemiler.length;
+    /* Önceki görüntü varsa birleştir: iş akışı onu veri dalından çekip veriyor. */
+    const onceki = process.argv[3] || process.env.AIS_ONCEKI;
+    if (onceki) {
+      try {
+        const o = JSON.parse(readFileSync(onceki, "utf8"));
+        const eski = Array.isArray(o && o.gemiler) ? o.gemiler : [];
+        gemiler = birlestir(eski, gemiler);
+        console.log(`  önceki görüntü: ${eski.length} gemi → birleşik ${gemiler.length}`);
+      } catch (h) {
+        console.log(`  önceki görüntü okunamadı (${h.message}), yalnız bu tur yazılıyor`);
+      }
+    }
     mkdirSync(dirname(cikti), { recursive: true });
     writeFileSync(cikti, JSON.stringify(goruntu(gemiler)), "utf8");
-    console.log(`${ham.length} mesaj → ${gemiler.length} gemi → ${cikti}`);
+    console.log(`${ham.length} mesaj → ${yeniSayi} yeni gemi → ${gemiler.length} toplam → ${cikti}`);
     if (!gemiler.length) process.exit(2);          /* boş görüntü yayınlanmasın */
   } catch (e) {
     console.error("olmadı:", e.message);

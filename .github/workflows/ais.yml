@@ -36,7 +36,7 @@ concurrency:
 jobs:
   topla:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 12          # 5 dk dinleme + kurulum + gönderme
     steps:
       - uses: actions/checkout@v4
 
@@ -44,10 +44,20 @@ jobs:
         with:
           node-version: "22"
 
+      # Önceki görüntü: tek pencere sahanın tamamını göstermez, demirli gemi
+      # 3 dakikada bir yayın yapar. Eski kayıtlar ömürleri dolana dek taşınır.
+      - name: Önceki görüntüyü al
+        run: |
+          git fetch origin ais-veri --depth 1 || echo "ais-veri dalı yok, ilk tur"
+          git show origin/ais-veri:ais.json > onceki.json 2>/dev/null || rm -f onceki.json
+          test -s onceki.json && echo "önceki görüntü alındı" || echo "önceki görüntü yok"
+
       - name: Anlık görüntüyü al
         env:
           AIS_ANAHTAR: ${{ secrets.AIS_ANAHTAR }}
-        run: node ais_topla.mjs cikti/ais.json
+        run: |
+          if [ -s onceki.json ]; then node ais_topla.mjs cikti/ais.json onceki.json
+          else node ais_topla.mjs cikti/ais.json; fi
 
       - name: Veri dalına yaz
         run: |
