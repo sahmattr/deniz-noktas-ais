@@ -299,7 +299,7 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
           if (p.butce) console.log(`  ${p.dokum.length}/${KUTULAR.length} kutu alındı, ` +
                                    `${p.butce} — kalan kutular sonraki turda`);
           else if (p.dokum.length === KUTULAR.length)
-            console.log(`  beş kutunun hepsi tek turda alındı`);
+            console.log(`  ${KUTULAR.length} kutunun hepsi tek turda alındı`);
         } else {
           console.log("  Pelyr: gemi gelmedi, yalnız aisstream kullanılıyor");
         }

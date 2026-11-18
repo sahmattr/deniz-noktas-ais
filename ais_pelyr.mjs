@@ -45,11 +45,14 @@ export const KUTULAR = [
      Canakkale bogazlari, Izmit korfezi, Gelibolu iceride. */
   { ad: "Marmara ve Boğazlar", guney: 40.0, kuzey: 41.4, bati: 26.0, dogu: 30.2 },
   { ad: "Karadeniz", guney: 40.9, kuzey: 43.6, bati: 27.3, dogu: 42.0 },
-  /* Ege tek kutuyken 928 gemi dondu ve `truncated` isaretliydi: 1000'lik sinira
-     dayaniyordu. 38,3 enleminde ikiye bolundu. Ustuste binen serit zararsiz --
-     harmanlama MMSI anahtarli. */
+  /* Ege tek kutuyken 928, enlemden bolunduktan sonra guneyi 997 gemi dondu ve
+     ikisi de `truncated` isaretliydi: 1000'lik sinira dayaniyordu. Enlemden
+     bolmek dengesiz cikti (kuzey 208, guney 997) cunku yogunluk Oniki Ada -
+     Kiklad - Girit kuzeyi hattinda. Guney bu yuzden boylamdan da bolundu.
+     Ustuste binen seritler zararsiz -- harmanlama MMSI anahtarli. */
   { ad: "Kuzey Ege", guney: 38.0, kuzey: 41.0, bati: 23.0, dogu: 28.0 },
-  { ad: "Güney Ege", guney: 34.8, kuzey: 38.3, bati: 23.0, dogu: 28.6 },
+  { ad: "Güneydoğu Ege", guney: 34.8, kuzey: 38.3, bati: 25.8, dogu: 28.6 },
+  { ad: "Güneybatı Ege", guney: 34.8, kuzey: 38.3, bati: 23.0, dogu: 26.2 },
   /* Turkiye guney kiyisi ve Kibris: Fethiye'den Iskenderun'a. */
   { ad: "Doğu Akdeniz", guney: 31.0, kuzey: 37.0, bati: 27.0, dogu: 36.6 },
   /* Girit guneyi: eski kutunun geri kalan acik denizi. Olculdu: 2 gemi. Tam bir
