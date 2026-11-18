@@ -14,6 +14,7 @@
 
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { pelyrCek, SIRALAR } from "./ais_pelyr.mjs";
 
 /* Türkiye denizleri: uygulamanın batimetri kutusuyla aynı (23–42° D, 31–43,6° K) */
 export const KUTU = { guney: 31.0, kuzey: 43.6, bati: 23.0, dogu: 42.0 };
@@ -223,9 +224,9 @@ export function birlestir(eski, yeni, simdi, omurSaat = OMUR_SAAT) {
 
 /* Uygulamanın indirdiği dosyanın biçimi. Sürüm alanı: biçim değişirse eski uygulama
    sessizce yanlış okumasın. */
-export function goruntu(gemiler, kutu = KUTU, simdi) {
+export function goruntu(gemiler, kutu = KUTU, simdi, kaynak = "aisstream.io") {
   return { surum: 1, t: Number.isFinite(simdi) ? simdi : Date.now(), kutu,
-           kaynak: "aisstream.io", gemiler };
+           kaynak, gemiler };
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
@@ -237,6 +238,27 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
     const ham = await topla(anahtar, KUTU, SURE, n => console.log(`  ${n} mesaj…`));
     let gemiler = ayikla(ham);
     const yeniSayi = gemiler.length;
+    /* İkinci kaynak. Anahtar yoksa atlanır: Pelyr isteğe bağlı, aisstream tek başına
+       çalışmaya devam eder. Pelyr'in çökmesi ya da bütçesinin dolması turu
+       düşürmemeli — bu yüzden hatası yutuluyor, yalnız loga yazılıyor. */
+    const kaynaklar = ["aisstream.io"];
+    const pAnahtar = process.env.PELYR_ANAHTAR;
+    if (pAnahtar) {
+      try {
+        const p = await pelyrCek(pAnahtar, KUTU, 1000, fetch, m => console.log(m));
+        if (p.gemiler.length) {
+          const once = gemiler.length;
+          gemiler = birlestir(gemiler, p.gemiler);
+          kaynaklar.push("pelyr.com");
+          console.log(`  Pelyr [${SIRALAR[p.sira].ad}]: ${p.gemiler.length} gemi → ` +
+                      `${once} + ${p.gemiler.length} harmanlandı → ${gemiler.length}`);
+        } else {
+          console.log("  Pelyr: gemi gelmedi, yalnız aisstream kullanılıyor");
+        }
+      } catch (h) {
+        console.log(`  Pelyr atlandı (${h.message}), yalnız aisstream kullanılıyor`);
+      }
+    }
     /* Önceki görüntü varsa birleştir: iş akışı onu veri dalından çekip veriyor. */
     const onceki = process.argv[3] || process.env.AIS_ONCEKI;
     if (onceki) {
@@ -250,7 +272,7 @@ if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` ||
       }
     }
     mkdirSync(dirname(cikti), { recursive: true });
-    writeFileSync(cikti, JSON.stringify(goruntu(gemiler)), "utf8");
+    writeFileSync(cikti, JSON.stringify(goruntu(gemiler, KUTU, undefined, kaynaklar.join(" + "))), "utf8");
     console.log(`${ham.length} mesaj → ${yeniSayi} yeni gemi → ${gemiler.length} toplam → ${cikti}`);
     if (!gemiler.length) process.exit(2);          /* boş görüntü yayınlanmasın */
   } catch (e) {

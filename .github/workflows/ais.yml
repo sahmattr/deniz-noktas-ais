@@ -55,6 +55,9 @@ jobs:
       - name: Anlık görüntüyü al
         env:
           AIS_ANAHTAR: ${{ secrets.AIS_ANAHTAR }}
+          # İkinci kaynak, isteğe bağlı. Secret tanımlı değilse boş gelir ve
+          # toplayıcı Pelyr'i sessizce atlar — tur yine aisstream ile tamamlanır.
+          PELYR_ANAHTAR: ${{ secrets.PELYR_ANAHTAR }}
         run: |
           if [ -s onceki.json ]; then node ais_topla.mjs cikti/ais.json onceki.json
           else node ais_topla.mjs cikti/ais.json; fi
