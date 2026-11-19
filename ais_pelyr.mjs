@@ -52,7 +52,15 @@ export const KUTULAR = [
      Ustuste binen seritler zararsiz -- harmanlama MMSI anahtarli. */
   { ad: "Kuzey Ege", guney: 38.0, kuzey: 41.0, bati: 23.0, dogu: 28.0 },
   { ad: "Güneydoğu Ege", guney: 34.8, kuzey: 38.3, bati: 25.8, dogu: 28.6 },
-  { ad: "Güneybatı Ege", guney: 34.8, kuzey: 38.3, bati: 23.0, dogu: 26.2 },
+  /* Guneybati Ege tek kutuyken 945 gemi dondu (sinirin %95'i) ve bir kere 997
+     ile kirpildi. Olculdu: gemilerin 808'i 38,00-38,25 K / 23,4-23,8 D
+     hucresinde, yani Pire-Salamis demir sahasinda. On anlik goruntude butun
+     boylam kesimleri tarandi; 23,65 her seferinde en dengeli ikiliyi verdi
+     (en kotu yari 483). Enlemden bolmek ise yaramiyor: en iyi enlem kesimi
+     37,9'da bile 213/732 cikiyor. Seritler 0,02 derece ustuste biniyor ki
+     kesim cizgisindeki gemi ikisinin arasina dusmesin. */
+  { ad: "Güneybatı Ege (Pire)", guney: 34.8, kuzey: 38.3, bati: 23.0, dogu: 23.66 },
+  { ad: "Güneybatı Ege (Kiklad)", guney: 34.8, kuzey: 38.3, bati: 23.64, dogu: 26.2 },
   /* Turkiye guney kiyisi ve Kibris: Fethiye'den Iskenderun'a. */
   { ad: "Doğu Akdeniz", guney: 31.0, kuzey: 37.0, bati: 27.0, dogu: 36.6 },
   /* Girit guneyi: eski kutunun geri kalan acik denizi. Olculdu: 2 gemi. Tam bir
@@ -69,7 +77,7 @@ export function kutuMetni(kutu, sira) {
 /* Pelyr kaydını ais_topla.mjs'in kayıt biçimine çevirir: {m,t,la,lo,cog,sog,hdg,a,tp,boy,vr}.
    Böylece birlestir() iki kaynağı hiç ayırt etmeden harmanlıyor. Ağdan bağımsız —
    sınamalar bunu doğrudan çağırır. */
-export function pelyrAyikla(veri, alim) {
+export function pelyrAyikla(veri, alim, sayac) {
   const al = Number.isFinite(alim) ? alim : Date.now();
   const liste = Array.isArray(veri && veri.vessels) ? veri.vessels : [];
   const cikti = [];
@@ -79,7 +87,13 @@ export function pelyrAyikla(veri, alim) {
     if (!Number.isFinite(m) || m <= 0) continue;
     const p = g.position;
     if (!p || typeof p !== "object") continue;                 /* mevkisiz kayıt gemi üretmez */
-    if (ELE.has(String(p.plausibility || ""))) continue;
+    if (ELE.has(String(p.plausibility || ""))) {
+      /* Elenen her kaydi sayiyoruz: "su gemi baskasinda var, bizde yok"
+         sorusunda bu sayi, kaynakta olup bizim attigimiz kayit var mi diye
+         bakilacak ilk yer. Sayac verilmezse hicbir sey degismiyor. */
+      if (sayac) sayac.dusuk = (sayac.dusuk || 0) + 1;
+      continue;
+    }
     const la = Number(p.lat), lo = Number(p.lon);
     if (!Number.isFinite(la) || !Number.isFinite(lo)) continue;
     if (la < -90 || la > 90 || lo < -180 || lo > 180) continue;
@@ -153,7 +167,9 @@ export async function pelyrIstek(anahtar, kutu, sira, enCok = EN_COK_ISTEK, geti
    gemi var ve secim alana dagitilmis -- cozum kutuyu bolmek, max'i buyutmek degil. */
 export async function pelyrKutu(anahtar, kutu, sira, enCok = EN_COK_ISTEK, getir = fetch) {
   const veri = await pelyrIstek(anahtar, kutu, sira, enCok, getir);
-  return { gemiler: pelyrAyikla(veri), kirpik: !!(veri && veri.truncated) };
+  const sayac = {};
+  const gemiler = pelyrAyikla(veri, undefined, sayac);
+  return { gemiler, kirpik: !!(veri && veri.truncated), dusuk: sayac.dusuk || 0 };
 }
 
 /* Butun kutular. bbox sirasi YALNIZ ilk kutuda aranir, bulunan sira otekilerde
@@ -248,8 +264,11 @@ export async function pelyrCekHepsi(anahtar, kutular = KUTULAR,
       else harita.set(k.m, (k.t || 0) >= (v.t || 0)
                            ? Object.assign({}, v, k) : Object.assign({}, k, v));
     }
-    dokum.push({ ad: kutu.ad, say: g.length, kirpik: !!(sonuc && sonuc.kirpik) });
+    const dusuk = (sonuc && sonuc.dusuk) || 0;
+    dokum.push({ ad: kutu.ad, say: g.length, kirpik: !!(sonuc && sonuc.kirpik),
+                 dusuk });
     if (ilerle) ilerle(`  Pelyr ${kutu.ad}: ${g.length} gemi` +
+                       (dusuk ? ` (${dusuk} kayıt "low" ile elendi)` : "") +
                        (sonuc && sonuc.kirpik ? " (KIRPIK — kutu bölünmeli)" : ""));
   }
   const gemiler = [...harita.values()].sort((a, b) => (b.t || 0) - (a.t || 0));

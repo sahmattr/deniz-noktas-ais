@@ -1,8 +1,18 @@
 name: AIS anlık görüntü
 
-# Her 20 dakikada bir Türkiye denizleri için bir AIS anlık görüntüsü alır ve
-# "ais-veri" dalına yazar. Uygulama o dosyayı indirir; anahtar yalnız burada,
-# depo gizlisinde durur ve hiçbir cihaza girmez.
+# Türkiye denizleri için her 20 dakikada bir AIS anlık görüntüsü alır ve
+# "ais-veri" dalına yazar. Bir koşum TEK görüntü almıyor: 5,5 saatlik bir
+# "nöbet" tutuyor ve o süre boyunca 20 dakikada bir görüntü yazıyor. Sebebi
+# ölçüldü: cron "*/20" olmasına rağmen GitHub 21 saatte yalnız 3 kez ateşledi
+# (21:34, 02:47, 11:00) — hata yok, iptal yok, kota yok; GitHub zamanlanmış
+# işleri "elinden geldiğince" çalıştırıyor ve sık cron'ları düşürüyor.
+# Ateşlemeyi denetleyemiyoruz, ateşleyen koşumun ne kadar süreceğini
+# denetleyebiliyoruz. Aşağıdaki `concurrency` ayarı nöbetleri birbirine
+# zincirliyor: nöbet sürerken gelen ateşleme sıraya giriyor ve nöbet biter
+# bitmez başlıyor.
+#
+# Uygulama o dosyayı indirir; anahtar yalnız burada, depo gizlisinde durur ve
+# hiçbir cihaza girmez.
 #
 # Bu iş AÇIK AIS deposunda koşar, haritanın özel deposunda değil. Sebep:
 # raw.githubusercontent özel depoya jetonsuz 404 veriyor, uygulama dosyayı indiremiyor.
@@ -16,6 +26,33 @@ name: AIS anlık görüntü
 #   2. AÇIK depo → Settings → Secrets and variables → Actions → New repository secret
 #      Ad: AIS_ANAHTAR   Değer: (anahtar)
 #   3. Actions sekmesinden bu iş akışını bir kez elle çalıştır (Run workflow).
+#
+# Koşum TETİKLEYENE GÖRE iki kipte çalışır:
+#
+#   schedule          → 330 dakikalık nöbet. GitHub'ın kendi cron'u seyrek
+#                       ateşlediği için, ateşlediğinde uzun kalmalı.
+#   workflow_dispatch → tek tur, ~10 dakikada biter. Dış bir cron servisi
+#                       (cron-job.org) 20 dakikada bir dürttüğünde kullanılan
+#                       kip budur: aynı kapsamayı runner'ı 7/24 tutmadan verir
+#                       (günde ~10 saat runner, 24 saat yerine).
+#
+# Dış servis durursa GitHub'ın seyrek ateşlemeleri yine 5,5 saatlik nöbetlere
+# dönüşür — kademeli bozulma, tek noktadan çökme değil.
+#
+# Dış cron kurulumu (jeton SENDE kalır, buraya hiçbir şey yazılmaz):
+#   1. GitHub → Settings → Developer settings → Personal access tokens →
+#      Fine-grained tokens → Generate new token
+#      Repository access: YALNIZ bu depo · Permissions: Actions = Read and write
+#      (Bu jeton secret okuyamaz, kod itemez, başka depoya dokunamaz.)
+#   2. cron-job.org → yeni iş · her 20 dakikada bir · POST
+#      https://api.github.com/repos/<kullanıcı>/<depo>/actions/workflows/ais.yml/dispatches
+#      Başlıklar: Authorization: Bearer <jeton> · Accept: application/vnd.github+json
+#      Gövde: {"ref":"main"}      Beklenen yanıt: 204
+#
+# GitHub'ın iş başına sınırı 6 saat; 330 dakika o sınırın altında güvenli bir
+# yer bırakıyor. Tur aralığını (TUR_DK) 20'nin altına indirmek cazip ama
+# Pelyr'in günlük kotası bilinmiyor: tur başına 9 istek atıyoruz, 20 dakika
+# ölçülmüş ve çalışan hız.
 #
 # Not: GitHub, 60 gün boyunca depoda insan eliyle bir hareket olmazsa zamanlanmış
 # iş akışlarını kendiliğinden durdurur; bu işin kendi commit'leri bunu sıfırlamaz.
@@ -36,7 +73,14 @@ concurrency:
 jobs:
   topla:
     runs-on: ubuntu-latest
-    timeout-minutes: 15          # 5 dk dinleme + Pelyr beklemeleri (en çok 240 sn) + gönderme
+    # Nöbet 330 dakika; 350 ona sığma payı bırakıyor. GitHub'ın üst sınırı 360.
+    timeout-minutes: 350
+    env:
+      # Zamanlayıcı ateşlerse uzun nöbet, dürtme gelirse tek tur. NOBET_DK=0
+      # döngüde doğal olarak "tek tur" demek: bitiş anı şimdi olduğu için ilk
+      # turdan sonraki sığma denetimi durduruyor.
+      NOBET_DK: ${{ github.event_name == 'schedule' && 330 || 0 }}
+      TUR_DK: 20                 # tur başlangıçları arası hedef aralık
     steps:
       - uses: actions/checkout@v4
 
@@ -46,61 +90,110 @@ jobs:
 
       # Önceki görüntü: tek pencere sahanın tamamını göstermez, demirli gemi
       # 3 dakikada bir yayın yapar. Eski kayıtlar ömürleri dolana dek taşınır.
+      # Nöbetin yalnız İLK turunda uzaktan alınır; sonraki turlarda bir önceki
+      # turun kendi çıktısı zaten elimizde.
       - name: Önceki görüntüyü al
         run: |
           git fetch origin ais-veri --depth 1 || echo "ais-veri dalı yok, ilk tur"
           git show origin/ais-veri:ais.json > onceki.json 2>/dev/null || rm -f onceki.json
           test -s onceki.json && echo "önceki görüntü alındı" || echo "önceki görüntü yok"
 
-      - name: Anlık görüntüyü al
+      - name: Nöbet
         env:
           AIS_ANAHTAR: ${{ secrets.AIS_ANAHTAR }}
           # İkinci kaynak, isteğe bağlı. Secret tanımlı değilse boş gelir ve
           # toplayıcı Pelyr'i sessizce atlar — tur yine aisstream ile tamamlanır.
           PELYR_ANAHTAR: ${{ secrets.PELYR_ANAHTAR }}
+          UZAK: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          DEPO: ${{ github.repository }}
         run: |
-          if [ -s onceki.json ]; then node ais_topla.mjs cikti/ais.json onceki.json
-          else node ais_topla.mjs cikti/ais.json; fi
+          # DİKKAT: burada `set -e` YOK ve bilerek yok. Tek turun hatası bütün
+          # nöbeti düşürmemeli: ağ tökezlemesi ya da sağlayıcının 5xx'i bir
+          # turu kaybettirir, 5 saati değil. Her tur kendi hatasını yutuyor.
+          BITIS=$(( $(date +%s) + NOBET_DK * 60 ))
+          TUR_SN=$(( TUR_DK * 60 ))
+          TUR=0; BASARILI=0; DUSEN=0
 
-      - name: Veri dalına yaz
-        run: |
-          set -e
-          test -s cikti/ais.json
-          UZAK="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          rm -rf .ais
-          ZORLA=""
-          # Dalın UCUNA ekliyoruz. Eskiden her tur `git init` + `--force` ile
-          # ilgisiz bir geçmiş basılıyordu; raw.githubusercontent dal adını bir
-          # süre önbellekte tutuyor ve önbellekteki commit force-push'tan sonra
-          # erişilemez olduğu için kullanıcı o aralıkta 404 alıyordu. Uç uca
-          # eklenince eski commit erişilebilir kalıyor: en kötüsü bir tur eski
-          # dosya gelir, 404 değil.
-          if git clone -q --depth 100 --branch ais-veri "$UZAK" .ais 2>/dev/null; then
-            SAYI=$(cd .ais && git rev-list --count HEAD)
-            # Geçmiş şişmesin: günde bir mertebesinde sıfırla (20 dakikada bir
-            # tur → 72 commit ≈ 1 gün). 404 penceresi de günde bir kez kalır.
-            if [ "$SAYI" -ge 72 ]; then
-              rm -rf .ais/.git
+          goruntuAl() {
+            if [ -s onceki.json ]; then node ais_topla.mjs cikti/ais.json onceki.json
+            else node ais_topla.mjs cikti/ais.json; fi
+          }
+          yaz() {
+            set -e
+            test -s cikti/ais.json
+            rm -rf .ais
+            ZORLA=""
+            # Dalın UCUNA ekliyoruz. Eskiden her tur `git init` + `--force` ile
+            # ilgisiz bir geçmiş basılıyordu; raw.githubusercontent dal adını bir
+            # süre önbellekte tutuyor ve önbellekteki commit force-push'tan sonra
+            # erişilemez olduğu için kullanıcı o aralıkta 404 alıyordu. Uç uca
+            # eklenince eski commit erişilebilir kalıyor: en kötüsü bir tur eski
+            # dosya gelir, 404 değil.
+            if git clone -q --depth 100 --branch ais-veri "$UZAK" .ais 2>/dev/null; then
+              SAYI=$(cd .ais && git rev-list --count HEAD)
+              # Geçmiş şişmesin: günde bir mertebesinde sıfırla (20 dakikada bir
+              # tur → 72 commit ≈ 1 gün). 404 penceresi de günde bir kez kalır.
+              if [ "$SAYI" -ge 72 ]; then
+                rm -rf .ais/.git
+                (cd .ais && git init -q -b ais-veri)
+                ZORLA="--force"
+                echo "geçmiş $SAYI commit olmuş, sıfırlandı"
+              fi
+            else
+              mkdir -p .ais
               (cd .ais && git init -q -b ais-veri)
               ZORLA="--force"
-              echo "geçmiş $SAYI commit olmuş, sıfırlandı"
+              echo "ais-veri dalı yok, kuruluyor"
             fi
-          else
-            mkdir -p .ais
-            (cd .ais && git init -q -b ais-veri)
-            ZORLA="--force"
-            echo "ais-veri dalı yok, kuruluyor"
-          fi
-          cp cikti/ais.json .ais/ais.json
-          cd .ais
-          git config user.name "ais-bot"
-          git config user.email "ais-bot@users.noreply.github.com"
-          git add ais.json
-          # Dosya birebir aynıysa commit yok: boşa tur basmayalım.
-          if git diff --cached --quiet; then
-            echo "görüntü değişmedi, yazılmadı"
-            exit 0
-          fi
-          git commit -q -m "AIS anlık görüntü $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push -q $ZORLA "$UZAK" ais-veri
-          echo "yazıldı: https://raw.githubusercontent.com/${{ github.repository }}/ais-veri/ais.json"
+            cp cikti/ais.json .ais/ais.json
+            cd .ais
+            git config user.name "ais-bot"
+            git config user.email "ais-bot@users.noreply.github.com"
+            git add ais.json
+            # Dosya birebir aynıysa commit yok: boşa tur basmayalım.
+            if git diff --cached --quiet; then
+              echo "görüntü değişmedi, yazılmadı"
+              exit 0
+            fi
+            git commit -q -m "AIS anlık görüntü $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push -q $ZORLA "$UZAK" ais-veri
+            echo "yazıldı: https://raw.githubusercontent.com/$DEPO/ais-veri/ais.json"
+          }
+
+          while :; do
+            TUR=$(( TUR + 1 ))
+            BASI=$(date +%s)
+            echo "::group::tur $TUR  ($(date -u +%H:%M:%SZ))"
+            if goruntuAl && ( yaz ); then
+              BASARILI=$(( BASARILI + 1 ))
+              # Bu turun çıktısı sonraki turun "öncekisi" olur: 6 saatlik ömür
+              # ancak böyle işe yarıyor. Eskiden turlar 8 saat arayla geldiği
+              # için devralma sıfır gemi katıyordu.
+              cp cikti/ais.json onceki.json
+            else
+              DUSEN=$(( DUSEN + 1 ))
+              echo "tur $TUR düştü, nöbet sürüyor (düşen: $DUSEN)"
+            fi
+            echo "::endgroup::"
+
+            SIMDI=$(date +%s)
+            GECEN=$(( SIMDI - BASI ))
+            UYKU=$(( TUR_SN - GECEN ))
+            [ "$UYKU" -lt 0 ] && UYKU=0
+            # Uyuduktan sonra bir tur daha sığmıyorsa nöbeti burada bitir:
+            # yarım kalan tur iş zaman aşımına yakalanır ve koşumu hata
+            # gösterir, oysa nöbetin dolması normal bir bitiş.
+            if [ $(( SIMDI + UYKU + GECEN )) -ge "$BITIS" ]; then
+              if [ "$NOBET_DK" -gt 0 ]; then
+                echo "nöbet doldu: $TUR tur, $BASARILI yazıldı, $DUSEN düştü"
+              else
+                echo "tek tur kipi: $BASARILI yazıldı, $DUSEN düştü"
+              fi
+              break
+            fi
+            echo "sonraki tura $UYKU sn"
+            sleep "$UYKU"
+          done
+
+          # Nöbet boyunca tek bir tur bile yazılamadıysa gerçek bir arıza var.
+          [ "$BASARILI" -gt 0 ]
